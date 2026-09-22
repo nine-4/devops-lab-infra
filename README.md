@@ -260,13 +260,21 @@ services:
   floci:
     user: root
     environment:
+      FLOCI_SERVICES_DOCKER_NETWORK: floci_default
       FLOCI_SERVICES_ECR_URI_STYLE: path
       FLOCI_SERVICES_EKS_DEFAULT_IMAGE: rancher/k3s:v1.34.11-k3s1
       FLOCI_SERVICES_EKS_KEEP_RUNNING_ON_SHUTDOWN: "false"
       FLOCI_SERVICES_ECR_KEEP_RUNNING_ON_SHUTDOWN: "false"
+      FLOCI_STORAGE_PRUNE_VOLUMES_ON_DELETE: "true"
 ```
 
 The k3s version is explicitly pinned rather than using `latest` so recreating the platform does not unexpectedly change Kubernetes versions.
+
+`FLOCI_SERVICES_DOCKER_NETWORK` is explicitly set to `floci_default` so Docker-backed EKS/k3s containers share a reachable network with the Floci service. This avoids relying on automatic network selection during cluster recovery.
+
+`FLOCI_STORAGE_PRUNE_VOLUMES_ON_DELETE` removes the corresponding disposable k3s Docker volume when an emulated EKS cluster is deleted. This prevents stale cluster state from surviving a Terraform destroy/recreate lifecycle.
+
+EKS API ports such as `localhost:6500` are treated as ephemeral runtime details. Cluster names are the stable identifiers. If Floci recreates the underlying k3s containers, API ports and cluster certificate data can change, so kubeconfig should be refreshed with `aws eks update-kubeconfig`.
 
 The current cluster nodes run:
 
@@ -487,7 +495,7 @@ Application deployment
 Full Terraform teardown
 ```
 
-Milestone 7 currently implemented:
+Milestone 7 completed:
 
 ```text
 Reusable Terraform EKS module
@@ -500,9 +508,32 @@ Platform-wide IAM operator identity
 Multi-cluster kubeconfig
 Separate GitOps repository
 Declarative DEV/UAT/PROD namespace definitions
+Full destroy/recreate lifecycle acceptance test
 ```
 
-The final Milestone 7 lifecycle acceptance test is to destroy the platform and successfully recreate it from the committed Terraform source.
+Lifecycle acceptance verified:
+
+```text
+Terraform destroy:
+18 resources destroyed
+Terraform state empty
+EKS resources removed
+ECR repository removed
+Platform IAM user removed
+EKS/k3s containers removed
+EKS/k3s volumes automatically pruned
+
+Terraform recreate:
+18 resources created
+Shared ECR recreated
+Management, non-production, and production EKS clusters recreated
+Fresh k3s containers and volumes created
+All three EKS clusters ACTIVE
+All three Kubernetes nodes Ready
+All Kubernetes /readyz checks passed
+```
+
+The platform can therefore be treated as disposable runtime infrastructure whose desired infrastructure definition is retained in Git and Terraform.
 
 ## Git Safety
 
