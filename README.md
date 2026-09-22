@@ -1,14 +1,31 @@
 # DevOps Lab Infrastructure
 
-Infrastructure-as-Code repository for my production-inspired DevOps learning environment.
+Infrastructure-as-Code repository for the DevOps Platform Lab.
 
-The goal of this project is to learn how infrastructure, container registries, Kubernetes, CI/CD, and GitOps fit together through hands-on implementation rather than only studying the tools individually.
+The goal of this project is to learn and demonstrate how infrastructure, Kubernetes, CI/CD, container registries, and GitOps fit together through a production-inspired hands-on environment.
 
-Infrastructure is defined with Terraform first, verified through command-line tools, and then inspected through graphical interfaces where useful.
+The primary lab runs locally in WSL2 to minimize cloud cost while preserving workflows that resemble real infrastructure operations.
 
-## Learning Workflow
+## Project Repositories
 
-The project follows this operating model:
+The project is separated into three primary repositories:
+
+```text
+devops-lab-app
+    Application source, build configuration, and future CI pipeline
+
+devops-lab-infra
+    Terraform infrastructure and Kubernetes cluster provisioning
+
+devops-lab-gitops
+    Kubernetes desired state and environment-specific configuration
+```
+
+This separation keeps application code, infrastructure, and Kubernetes deployment state independently versioned.
+
+## Operating Model
+
+The project follows this workflow:
 
 ```text
 Infrastructure as Code
@@ -17,10 +34,31 @@ Infrastructure as Code
 CLI verification and troubleshooting
         |
         v
-GUI inspection
+GUI inspection when useful
 ```
 
 Persistent infrastructure changes should be defined in code rather than manually created through graphical interfaces.
+
+The local runtime is intentionally disposable:
+
+```text
+Git + Terraform
+      |
+      | permanent source of truth
+      v
+terraform apply
+      |
+      v
+Local platform
+      |
+      v
+Lab work
+      |
+      v
+terraform destroy
+```
+
+The platform should be reproducible from source rather than depending on long-lived local containers or Kubernetes state.
 
 ## Technology
 
@@ -34,6 +72,7 @@ Current infrastructure tooling includes:
 * Kubernetes
 * k3s
 * kubectl
+* Kustomize
 
 Future stages will introduce:
 
@@ -41,227 +80,464 @@ Future stages will introduce:
 * SonarQube
 * Trivy
 * Argo CD
-* Kustomize
 * Monitoring and alerting
 
-## Why Floci?
+## Platform Architecture
 
-The primary lab runs locally inside WSL2 to minimize cloud cost.
-
-Floci provides AWS-compatible local APIs that allow Terraform and the AWS CLI to interact with locally emulated AWS services.
-
-The important abstraction is:
+The current local platform contains three Kubernetes clusters:
 
 ```text
-Terraform
-    |
-    v
-AWS Provider
-    |
-    v
-Floci AWS-compatible APIs
+                         Shared ECR
+                      devops-lab-app
+                            |
+              +-------------+-------------+
+              |             |             |
+              v             v             v
+         devops-mgmt   devops-nonprod  devops-prod
+              |             |             |
+          Management      DEV / UAT       PROD
+           tooling
 ```
 
-This allows the Terraform configuration to use normal AWS resource types while the infrastructure is implemented locally.
-
-For EKS emulation, Floci creates a local k3s Kubernetes cluster backed by Docker.
-
-This is useful for learning AWS-style infrastructure workflows, but it is not equivalent to running a real AWS-managed EKS control plane.
-
-A later milestone may validate the architecture against actual AWS infrastructure for short-lived testing.
-
-## Repository Structure
-
-Current proof-of-concept layout:
+The intended responsibilities are:
 
 ```text
-terraform/
-└── poc/
-    ├── versions.tf
-    ├── provider.tf
-    ├── network.tf
-    ├── iam.tf
-    ├── ecr.tf
-    ├── eks.tf
-    ├── outputs.tf
-    └── .terraform.lock.hcl
+devops-mgmt
+    Management and platform tooling
+    Argo CD will run here later
+
+devops-nonprod
+    DEV namespace
+    UAT namespace
+
+devops-prod
+    PROD namespace
 ```
 
-### `versions.tf`
+DEV and UAT share a non-production cluster.
 
-Defines:
+Production uses a separate cluster to provide a stronger infrastructure and failure boundary.
 
-* Supported Terraform version
-* HashiCorp AWS Provider dependency and version constraint
+## Network Architecture
 
-### `provider.tf`
-
-Configures the AWS provider to use the local Floci endpoints instead of real AWS APIs.
-
-### `network.tf`
-
-Creates the proof-of-concept network:
+Each cluster has its own logical VPC and two subnets.
 
 ```text
-VPC
-├── Subnet A
-└── Subnet B
-```
-
-Current CIDR layout:
-
-```text
+Management
 VPC       10.10.0.0/16
 Subnet A  10.10.1.0/24
 Subnet B  10.10.2.0/24
+
+Non-production
+VPC       10.20.0.0/16
+Subnet A  10.20.1.0/24
+Subnet B  10.20.2.0/24
+
+Production
+VPC       10.30.0.0/16
+Subnet A  10.30.1.0/24
+Subnet B  10.30.2.0/24
 ```
 
-### `iam.tf`
+In a larger real-world AWS environment, production and non-production could be isolated further through separate AWS accounts or organizational boundaries.
 
-Creates the IAM resources required by the local EKS proof of concept:
+## Terraform Structure
 
-* EKS cluster role
-* EKS administrative IAM user
-* IAM access key
+```text
+terraform/
+├── modules/
+│   └── eks-cluster/
+│       ├── versions.tf
+│       ├── variables.tf
+│       ├── network.tf
+│       ├── iam.tf
+│       ├── eks.tf
+│       └── outputs.tf
+│
+├── platform/
+│   ├── versions.tf
+│   ├── provider.tf
+│   ├── main.tf
+│   ├── iam.tf
+│   ├── ecr.tf
+│   ├── outputs.tf
+│   └── .terraform.lock.hcl
+│
+└── poc/
+    └── Milestone 6 proof-of-concept configuration
+```
 
-The generated credentials are sensitive and are stored in Terraform state, which is excluded from Git.
+### Reusable EKS Module
 
-### `ecr.tf`
+`terraform/modules/eks-cluster` defines the reusable infrastructure required for one cluster:
 
-Creates the ECR repository used for the application container:
+```text
+EKS cluster module
+├── VPC
+├── subnet A
+├── subnet B
+├── EKS IAM role
+└── EKS cluster
+```
+
+The root platform configuration instantiates the same module three times:
+
+```text
+module.management
+module.nonprod
+module.prod
+```
+
+This avoids duplicating the cluster implementation.
+
+## Shared ECR
+
+The platform creates one application repository:
 
 ```text
 devops-lab-app
 ```
 
-The local PoC uses Floci's path-style ECR URI:
+The current Floci path-style repository URL follows this structure:
 
 ```text
 localhost:5100/000000000000/us-east-1/devops-lab-app
 ```
 
-The repository is configured with `force_delete = true` because this is a disposable local environment and should be completely removable with Terraform.
-
-### `eks.tf`
-
-Creates the logical EKS cluster:
+The repository is shared between environments because the project follows a build-once artifact promotion model:
 
 ```text
-devops-poc
+Build image once
+       |
+       v
+      DEV
+       |
+       v
+      UAT
+       |
+       v
+     PROD
 ```
 
-The cluster references the Terraform-managed IAM role and subnets.
+The same immutable image or digest should eventually be promoted between environments rather than rebuilt separately.
 
-Floci implements the local EKS cluster using k3s.
+`force_delete = true` is enabled because this is a disposable local lab and Terraform must be able to remove a repository containing test images.
 
-### `outputs.tf`
+## Floci
 
-Provides useful values such as:
-
-* ECR repository URL
-* EKS cluster name
-* Generated IAM access key
-
-Sensitive outputs are marked as sensitive.
-
-## Proof-of-Concept Architecture
-
-Milestone 6 validated the following path:
+Floci provides AWS-compatible local APIs used by Terraform and the AWS CLI.
 
 ```text
-Terraform
-    |
-    v
-Floci
-    |
-    +--> VPC
-    |
-    +--> Subnets
-    |
-    +--> IAM
-    |
-    +--> ECR
-    |      |
-    |      v
-    |   Application image
-    |
-    └--> EKS
-           |
-           v
-          k3s
-           |
-           v
-       Kubernetes
-           |
-           v
-    devops-lab-app
+Terraform / AWS CLI
+        |
+        v
+http://localhost:4566
+        |
+        v
+      Floci
 ```
 
-The Spring Boot application was successfully:
+Floci implements the local EKS clusters using k3s containers.
 
-1. Built as a Docker image
-2. Pushed to the Floci-backed ECR repository
-3. Discovered through the AWS ECR API
-4. Pulled by the k3s Kubernetes cluster
-5. Deployed as a Kubernetes Deployment
-6. Verified as `Running` and `Ready`
-7. Tested through `/api/version`
-8. Tested through `/actuator/health`
+Docker is therefore used to inspect the emulator implementation layer, but Docker is not considered the normal administration interface for EKS.
 
-The deployed image was verified by immutable digest.
+In real AWS EKS, the managed control plane would normally be operated through AWS APIs, the AWS Console, and Kubernetes tools such as `kubectl`.
+
+## Local Floci Runtime Configuration
+
+The Floci UI/vendor stack is stored separately from this repository.
+
+A local Compose override is currently used at:
+
+```text
+~/tools/floci-ui/docker-compose.local.yml
+```
+
+The required configuration is:
+
+```yaml
+services:
+  floci:
+    user: root
+    environment:
+      FLOCI_SERVICES_DOCKER_NETWORK: floci_default
+      FLOCI_SERVICES_ECR_URI_STYLE: path
+      FLOCI_SERVICES_EKS_DEFAULT_IMAGE: rancher/k3s:v1.34.11-k3s1
+      FLOCI_SERVICES_EKS_KEEP_RUNNING_ON_SHUTDOWN: "false"
+      FLOCI_SERVICES_ECR_KEEP_RUNNING_ON_SHUTDOWN: "false"
+      FLOCI_STORAGE_PRUNE_VOLUMES_ON_DELETE: "true"
+```
+
+The k3s version is explicitly pinned rather than using `latest` so recreating the platform does not unexpectedly change Kubernetes versions.
+
+`FLOCI_SERVICES_DOCKER_NETWORK` is explicitly set to `floci_default` so Docker-backed EKS/k3s containers share a reachable network with the Floci service. This avoids relying on automatic network selection during cluster recovery.
+
+`FLOCI_STORAGE_PRUNE_VOLUMES_ON_DELETE` removes the corresponding disposable k3s Docker volume when an emulated EKS cluster is deleted. This prevents stale cluster state from surviving a Terraform destroy/recreate lifecycle.
+
+EKS API ports such as `localhost:6500` are treated as ephemeral runtime details. Cluster names are the stable identifiers. If Floci recreates the underlying k3s containers, API ports and cluster certificate data can change, so kubeconfig should be refreshed with `aws eks update-kubeconfig`.
+
+The current cluster nodes run:
+
+```text
+Kubernetes / k3s:
+v1.34.11+k3s1
+
+Container runtime:
+containerd
+```
+
+## Starting Floci
+
+From the Floci directory:
+
+```bash
+cd ~/tools/floci-ui
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.local.yml \
+  up -d
+```
+
+Verify:
+
+```bash
+curl -sS http://localhost:4566/_floci/health | jq
+```
 
 ## Terraform Workflow
 
-Initialize Terraform:
+Enter the repository:
 
 ```bash
-terraform init
+cd ~/projects/devops-platform-lab/devops-lab-infra
+```
+
+Provide local Floci bootstrap credentials:
+
+```bash
+export AWS_ACCESS_KEY_ID=test
+export AWS_SECRET_ACCESS_KEY=test
+export AWS_DEFAULT_REGION=us-east-1
+export AWS_ENDPOINT_URL=http://localhost:4566
+```
+
+Initialize:
+
+```bash
+terraform -chdir=terraform/platform init
 ```
 
 Format:
 
 ```bash
-terraform fmt
+terraform -chdir=terraform/platform fmt
 ```
 
 Validate:
 
 ```bash
-terraform validate
+terraform -chdir=terraform/platform validate
 ```
 
 Review the proposed infrastructure:
 
 ```bash
-terraform plan -out=poc.tfplan
+terraform -chdir=terraform/platform plan \
+  -out=platform.tfplan
 ```
 
 Apply the reviewed plan:
 
 ```bash
-terraform apply poc.tfplan
+terraform -chdir=terraform/platform apply platform.tfplan
 ```
 
-Inspect managed resources:
+Inspect Terraform-managed objects:
 
 ```bash
-terraform state list
+terraform -chdir=terraform/platform state list
 ```
 
-Destroy the disposable environment:
+## Platform Outputs
+
+Useful outputs include:
+
+```text
+cluster_names
+cluster_endpoints
+ecr_repository_url
+vpc_ids
+platform_admin_access_key_id
+platform_admin_secret_access_key
+```
+
+The administrator secret access key is marked sensitive.
+
+Terraform state may contain sensitive values and must never be committed to Git.
+
+## Operator Identity
+
+Terraform creates one local platform administrator:
+
+```text
+devops-platform-admin
+```
+
+The initial `test/test` Floci credentials are used only to bootstrap the platform.
+
+After creation, AWS CLI and Kubernetes operations use the generated platform administrator identity.
+
+```text
+test/test
+    |
+    v
+Terraform bootstrap
+    |
+    v
+devops-platform-admin
+    |
+    +--> devops-mgmt
+    +--> devops-nonprod
+    +--> devops-prod
+```
+
+## Multi-Cluster kubectl Access
+
+The kubeconfig contains separate contexts:
+
+```text
+devops-mgmt
+devops-nonprod
+devops-prod
+```
+
+Non-production should normally remain the default context:
 
 ```bash
-terraform plan -destroy -out=destroy.tfplan
-terraform apply destroy.tfplan
+kubectl config use-context devops-nonprod
 ```
 
-Saved plan files are temporary execution artifacts and are not committed to Git.
+For important operations, specify the target explicitly:
+
+```bash
+kubectl --context devops-prod get nodes
+```
+
+This reduces the risk of accidentally operating against the wrong cluster.
+
+## Kubernetes Desired State
+
+Terraform creates the Kubernetes infrastructure but does not own application Kubernetes resources.
+
+Those are defined in the separate:
+
+```text
+devops-lab-gitops
+```
+
+repository.
+
+The intended ownership model is:
+
+```text
+Terraform
+    |
+    v
+Create Kubernetes infrastructure
+
+GitOps repository
+    |
+    v
+Define Kubernetes desired state
+
+Argo CD
+    |
+    v
+Reconcile desired state into Kubernetes
+```
+
+Jenkins will later perform continuous integration but should not directly deploy workloads with `kubectl apply`.
+
+## Proof of Concept
+
+`terraform/poc` contains the Milestone 6 proof of concept.
+
+That configuration proved the initial end-to-end path:
+
+```text
+Terraform
+   |
+   v
+Floci
+   |
+   +--> VPC
+   +--> Subnets
+   +--> IAM
+   +--> ECR
+   +--> EKS / k3s
+             |
+             v
+       devops-lab-app
+```
+
+The PoC remains in the repository as historical learning material and a reference implementation.
+
+## Current Status
+
+Milestone 6 completed:
+
+```text
+Terraform + Floci proof of concept
+ECR container image workflow
+Single EKS/k3s cluster
+Application deployment
+Full Terraform teardown
+```
+
+Milestone 7 completed:
+
+```text
+Reusable Terraform EKS module
+Shared ECR
+Management cluster
+Non-production cluster
+Production cluster
+Pinned Kubernetes/k3s version
+Platform-wide IAM operator identity
+Multi-cluster kubeconfig
+Separate GitOps repository
+Declarative DEV/UAT/PROD namespace definitions
+Full destroy/recreate lifecycle acceptance test
+```
+
+Lifecycle acceptance verified:
+
+```text
+Terraform destroy:
+18 resources destroyed
+Terraform state empty
+EKS resources removed
+ECR repository removed
+Platform IAM user removed
+EKS/k3s containers removed
+EKS/k3s volumes automatically pruned
+
+Terraform recreate:
+18 resources created
+Shared ECR recreated
+Management, non-production, and production EKS clusters recreated
+Fresh k3s containers and volumes created
+All three EKS clusters ACTIVE
+All three Kubernetes nodes Ready
+All Kubernetes /readyz checks passed
+```
+
+The platform can therefore be treated as disposable runtime infrastructure whose desired infrastructure definition is retained in Git and Terraform.
 
 ## Git Safety
 
-The repository intentionally excludes local Terraform state and sensitive runtime files.
-
-Examples include:
+Local and sensitive artifacts are excluded from source control, including:
 
 ```text
 .terraform/
@@ -275,61 +551,10 @@ Examples include:
 kubeconfig
 ```
 
-The provider lock file is committed:
+Terraform provider lock files are committed:
 
 ```text
 .terraform.lock.hcl
 ```
 
-because it records the selected provider versions and checksums required for reproducible Terraform initialization.
-
-## Important PoC Findings
-
-The proof of concept produced several useful operational lessons:
-
-* EKS subnet references must correspond to actual infrastructure resources.
-* Terraform configuration health and Kubernetes runtime health are different concerns.
-* A recreated Kubernetes cluster can receive a different API endpoint, requiring kubeconfig to be refreshed.
-* Floci EKS persistence can expose k3s networking issues after a full WSL/Docker restart.
-* Floci's ECR hostname-style addressing was problematic in the local WSL environment.
-* Path-style ECR addressing resolved the local registry namespace mismatch.
-* ECR repositories containing images require explicit deletion behavior.
-* Floci implementation details such as Docker containers and volumes are separate from Terraform-managed AWS resources.
-
-These troubleshooting cases were part of validating the behavior of the local platform and helped define requirements for the permanent architecture.
-
-## Current Status
-
-### Milestone 6 — Complete
-
-Validated:
-
-* Terraform AWS provider with Floci
-* VPC creation
-* Multiple subnet creation
-* IAM resources
-* ECR repository
-* Path-style ECR
-* Docker image push
-* ECR API image discovery
-* EKS creation
-* k3s-backed Kubernetes
-* Kubernetes authentication
-* Kubernetes Deployment
-* ECR-to-Kubernetes image delivery
-* Spring Boot application health
-* Full Terraform teardown
-
-The PoC infrastructure is currently destroyed when not needed.
-
-## Next
-
-The next milestone will evolve this proof of concept into a more permanent environment model supporting:
-
-```text
-DEV
-UAT
-PROD
-```
-
-The design will focus on realistic environment isolation, immutable artifact promotion, Kubernetes configuration management, and eventually GitOps with Argo CD.
+because they record the selected provider versions and checksums used for reproducible initialization.
