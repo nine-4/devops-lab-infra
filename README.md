@@ -261,18 +261,19 @@ services:
     user: root
     environment:
       FLOCI_SERVICES_DOCKER_NETWORK: floci_default
+      FLOCI_SERVICES_EKS_DOCKER_NETWORK: floci_default
       FLOCI_SERVICES_ECR_URI_STYLE: path
       FLOCI_SERVICES_EKS_DEFAULT_IMAGE: rancher/k3s:v1.34.11-k3s1
-      FLOCI_SERVICES_EKS_KEEP_RUNNING_ON_SHUTDOWN: "false"
+      FLOCI_SERVICES_EKS_KEEP_RUNNING_ON_SHUTDOWN: "true"
       FLOCI_SERVICES_ECR_KEEP_RUNNING_ON_SHUTDOWN: "false"
-      FLOCI_STORAGE_PRUNE_VOLUMES_ON_DELETE: "true"
+      FLOCI_STORAGE_PRUNE_VOLUMES_ON_DELETE: "false"
 ```
 
 The k3s version is explicitly pinned rather than using `latest` so recreating the platform does not unexpectedly change Kubernetes versions.
 
-`FLOCI_SERVICES_DOCKER_NETWORK` is explicitly set to `floci_default` so Docker-backed EKS/k3s containers share a reachable network with the Floci service. This avoids relying on automatic network selection during cluster recovery.
+`FLOCI_SERVICES_DOCKER_NETWORK` is explicitly set to `floci_default` so Docker-backed EKS/k3s containers share a reachable network with the Floci service. These settings help newly created k3s containers use the intended Docker network. Floci 2.0.1 can still select the bridge-network address when adopting surviving containers, leaving EKS reporting CREATING even when Kubernetes is healthy.
 
-`FLOCI_STORAGE_PRUNE_VOLUMES_ON_DELETE` removes the corresponding disposable k3s Docker volume when an emulated EKS cluster is deleted. This prevents stale cluster state from surviving a Terraform destroy/recreate lifecycle.
+`FLOCI_STORAGE_PRUNE_VOLUMES_ON_DELETE` is now disabled to protect persistent k3s volumes during Floci lifecycle operations. `FLOCI_SERVICES_EKS_KEEP_RUNNING_ON_SHUTDOWN` is enabled so Floci does not intentionally remove running k3s containers during its normal shutdown.
 
 EKS API ports such as `localhost:6500` are treated as ephemeral runtime details. Cluster names are the stable identifiers. If Floci recreates the underlying k3s containers, API ports and cluster certificate data can change, so kubeconfig should be refreshed with `aws eks update-kubeconfig`.
 
@@ -304,6 +305,78 @@ Verify:
 ```bash
 curl -sS http://localhost:4566/_floci/health | jq
 ```
+
+## Lab Health Checks and Recovery
+
+The lab uses a read-only health-check script:
+
+```bash
+./scripts/lab-status.sh
+echo "Exit code: $?"
+```
+
+The script checks:
+
+- Docker Engine availability
+- Floci container and EKS service health
+- Named k3s Docker volumes and their container attachments
+- Kubernetes API readiness and node conditions
+- Floci EKS lifecycle status
+- DEV, UAT, and PROD namespaces
+- Argo CD installation and Application resources
+
+### Exit Codes
+
+| Code | Result | Meaning |
+| --- | --- | --- |
+| 0 | HEALTHY | All required checks passed |
+| 1 | DEGRADED | Warnings exist, but no required check failed |
+| 2 | RECOVERY REQUIRED | Required resources are missing or unavailable |
+
+Floci EKS status is checked separately from Kubernetes health.
+A Floci status of `CREATING` does not necessarily mean Kubernetes is
+unavailable. Kubernetes readiness must be verified independently.
+
+The script does not create, restart, repair, or delete infrastructure.
+
+### Current Recovery State
+
+Following the October 2026 Floci recovery incident:
+
+- The management and production k3s datastores were replaced.
+- The non-production datastore retained its existing DEV and UAT namespaces.
+- All three Kubernetes APIs recovered and their nodes became Ready.
+- The management cluster requires Argo CD bootstrapping.
+- The production cluster requires restoration of the PROD namespace.
+
+These are recovery tasks, not normal startup operations.
+
+### Initial Backup
+
+An initial recovery checkpoint contains Kubernetes SQLite snapshots,
+K3s server configuration and tokens, Floci metadata, and Terraform state.
+
+The checkpoint was encrypted with GPG AES-256 and copied outside WSL
+to the Windows filesystem. The two encrypted copies were verified
+against matching SHA-256 checksums.
+
+Backups must remain outside public Git repositories.
+
+The initial backup has not yet passed a full restoration test.
+Both copies currently reside on the same physical workstation.
+
+### Known Limitations
+
+The first version of `lab-status.sh` verifies named volume existence
+and attachment but does not yet detect a volume silently replaced
+under the same name.
+
+Persistent volume identity checks, safe startup automation, and
+restoration testing are planned for later recovery stages.
+
+Normal startup and disaster recovery must remain separate workflows.
+A degraded Floci status must never automatically trigger container
+recreation, volume deletion, or Terraform destruction.
 
 ## Terraform Workflow
 
@@ -533,7 +606,9 @@ All three Kubernetes nodes Ready
 All Kubernetes /readyz checks passed
 ```
 
-The platform can therefore be treated as disposable runtime infrastructure whose desired infrastructure definition is retained in Git and Terraform.
+The Milestone 7 destroy/recreate test above was performed under the earlier volume-pruning configuration. It remains historical evidence of provisioning reproducibility, not a description of the current persistence policy.
+
+The current lab prioritizes preservation of existing Kubernetes datastores. Intentional teardown and volume cleanup must be handled separately from ordinary startup and shutdown.
 
 ## Git Safety
 
