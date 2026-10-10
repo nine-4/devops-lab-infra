@@ -289,22 +289,33 @@ containerd
 
 ## Starting Floci
 
-From the Floci directory:
+For an existing lab, use the safe startup script instead of
+directly recreating the Docker Compose stack.
 
 ```bash
-cd ~/tools/floci-ui
-
-docker compose \
-  -f docker-compose.yml \
-  -f docker-compose.local.yml \
-  up -d
+cd ~/projects/devops-platform-lab/devops-lab-infra
+./scripts/lab-up.sh
 ```
 
-Verify:
+The script verifies persistent-volume identities before starting
+Floci. It requires existing Docker containers, volumes, Floci
+metadata, and the intended Docker network.
 
-```bash
-curl -sS http://localhost:4566/_floci/health | jq
-```
+It starts stopped containers but never creates replacements,
+deletes volumes, or runs Terraform provisioning.
+
+The script loads Terraform-managed operator credentials into its
+own process, waits for Kubernetes API readiness, and runs the
+read-only health check.
+
+Its final exit code reflects overall lab health. Missing GitOps
+resources can produce RECOVERY REQUIRED even when startup succeeds.
+
+Do not use Docker Compose force-recreation as an automatic fix for
+Floci EKS clusters reporting CREATING. Verify Kubernetes readiness
+independently.
+
+Initial provisioning and disaster recovery are separate workflows.
 
 ## Lab Health Checks and Recovery
 
@@ -324,6 +335,35 @@ The script checks:
 - Floci EKS lifecycle status
 - DEV, UAT, and PROD namespaces
 - Argo CD installation and Application resources
+
+### Safe Startup and Volume Identity
+
+The lab records expected Docker volume creation timestamps in a
+local baseline outside the Git repository:
+
+```text
+~/.local/state/devops-platform-lab/volume-baseline.tsv
+```
+
+The baseline is initialized once after verifying the existing
+cluster volumes. It must not be automatically regenerated.
+
+Verify the recorded volumes using:
+
+```bash
+./scripts/lab-volume-baseline.sh --verify
+```
+
+Both `lab-status.sh` and `lab-up.sh` use this verification.
+
+The check compares volume names and creation timestamps and confirms
+that each existing k3s container has the expected volume attached.
+
+A missing or replaced volume causes startup to stop rather than
+silently accept newly initialized Kubernetes state.
+
+The baseline is not a backup. Preserve it separately from WSL,
+alongside the encrypted recovery records.
 
 ### Exit Codes
 
@@ -367,12 +407,13 @@ Both copies currently reside on the same physical workstation.
 
 ### Known Limitations
 
-The first version of `lab-status.sh` verifies named volume existence
-and attachment but does not yet detect a volume silently replaced
-under the same name.
+Volume baseline checks now detect changes to Docker volume creation
+timestamps, but cannot detect in-place datastore corruption or prove
+that Kubernetes contents remain unchanged.
 
-Persistent volume identity checks, safe startup automation, and
-restoration testing are planned for later recovery stages.
+The safe startup script has passed its already-running environment
+test. Full WSL shutdown/resume and disaster-recovery restoration
+tests remain pending.
 
 Normal startup and disaster recovery must remain separate workflows.
 A degraded Floci status must never automatically trigger container
