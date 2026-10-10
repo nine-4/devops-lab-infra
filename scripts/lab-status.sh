@@ -9,6 +9,8 @@ set -o pipefail
 FLOCI_URL="http://localhost:4566"
 CLUSTERS=(devops-mgmt devops-nonprod devops-prod)
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 warnings=0
 failures=0
 
@@ -86,6 +88,12 @@ fi
 
 # Persistent volume and container attachment checks.
 section "Kubernetes Persistent Storage"
+
+if "$SCRIPT_DIR/lab-volume-baseline.sh" --verify; then
+  ok "Persistent volume identities match baseline"
+else
+  fail "Persistent volume identity verification failed"
+fi
 
 for cluster in "${CLUSTERS[@]}"; do
   volume="floci-eks-$cluster"
