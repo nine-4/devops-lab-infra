@@ -319,6 +319,10 @@ Initial provisioning and disaster recovery are separate workflows.
 
 ## Lab Health Checks and Recovery
 
+For safe startup, terminal initialization, Argo CD recovery,
+temporary DNS troubleshooting, and encrypted backups, see the
+[Local Lab Recovery Runbook](docs/lab-recovery.md).
+
 The lab uses a read-only health-check script:
 
 ```bash
