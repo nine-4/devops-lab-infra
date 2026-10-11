@@ -1,0 +1,14 @@
+# Temporary DNS workaround for the backup ISP environment.
+# Remove after a durable K3s DNS solution is established.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  github.com.server: |
+    github.com:53 {
+      errors
+      cache 30
+      forward . 10.255.255.254
+    }
