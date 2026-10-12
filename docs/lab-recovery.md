@@ -16,25 +16,26 @@ as an automatic recovery action.
 
 ## 1. Resume the Lab
 
-From the infrastructure repository:
+From the infrastructure repository, run:
 
     ./scripts/lab-up.sh
 
-The startup script verifies the recorded Docker volume identities
-before starting existing containers. It refuses to create missing
-containers or silently accept replaced volumes.
+No fresh backup is needed immediately before ordinary or unexpected
+WSL shutdown. Existing Docker volumes are intended to persist.
 
-Inspect the resulting state:
+The startup script verifies recorded volume identities, existing
+containers, safe Floci settings, and EKS authentication webhook
+endpoints before starting the existing Kubernetes containers.
+
+It must not create, recreate, or prune infrastructure.
+
+Inspect the resulting state with:
 
     ./scripts/lab-status.sh
 
-Current known limitation: Floci may report EKS clusters as CREATING
-while their Kubernetes APIs and nodes are Ready.
-
-The health check therefore reports DEGRADED (exit 1) even when
-Kubernetes and Argo CD are operational.
-
-Do not disregard other failures.
+Floci may still report EKS clusters as CREATING while Kubernetes is
+operational. This produces known DEGRADED warnings (exit code 1).
+Other failures must be investigated separately.
 
 ## 2. Initialize a New Terminal
 
@@ -69,6 +70,40 @@ A missing or changed volume requires investigation against the
 protected recovery records.
 
 Volume identities do not prove database integrity.
+
+### EKS Authentication Webhook Recovery
+
+During the October 2026 shutdown/resume test, K3s retained the old
+Floci webhook IP address 172.18.0.2 after Docker reassigned IPs.
+
+The resulting Kubernetes authentication error was Unauthorized,
+although native K3s administrative access remained operational.
+
+The approved webhook endpoint is:
+
+    http://floci:4566/_floci/eks/token-webhook
+
+Verify the existing webhook configurations using:
+
+    ./scripts/verify-eks-webhooks.sh
+
+This is a read-only check and also works with stopped containers.
+
+If validation fails, do not automatically rewrite configuration files
+or recreate containers. Inspect the Docker network and actual webhook
+endpoints, verify the original volume identities, and preserve the
+original configurations before considering a manual repair.
+
+The verified repair changed the exact stale endpoint in each existing
+K3s container to the Floci hostname. Each container was restarted
+individually using docker restart --timeout 90.
+
+After each restart, the original container and volume identities were
+verified, followed by native Kubernetes API readiness and external
+EKS-token authentication.
+
+Any future manual repair must be performed one cluster at a time.
+Do not overwrite unknown webhook configurations.
 
 ## 4. Restore Argo CD
 
@@ -186,44 +221,33 @@ In the October 2026 recovery, Argo CD recreated Namespace/prod
 from clusters/prod. The existing DEV and UAT namespaces were
 already synchronized.
 
-## 7. Temporary GitHub DNS Workaround
+## 7. DNS Recovery and Retired GitHub Workaround
 
-The backup ISP exposed a K3s DNS fallback problem.
+The backup ISP previously caused external DNS failures in CoreDNS.
+K3s fell back to Google DNS resolvers that were unreachable.
 
-K3s rejected Docker's 127.0.0.11 resolver for pod DNS and
-selected 8.8.8.8 and Google's IPv6 resolver instead.
+A temporary coredns-custom ConfigMap forwarded GitHub DNS queries
+to the WSL DNS resolver at 10.255.255.254.
 
-Those upstream resolvers were unreachable from CoreDNS.
+After IT restored the main ISP, normal CoreDNS forwarding and direct
+Google DNS queries succeeded.
 
-The management cluster currently has a temporary coredns-custom
-ConfigMap forwarding github.com queries to WSL DNS at
-10.255.255.254.
+The temporary ConfigMap was removed on October 12, 2026.
 
-Its source is:
+Subsequent verification confirmed:
 
-    kubernetes/recovery/coredns-github-temporary.yaml
+- Internal Kubernetes DNS resolution works.
+- GitHub resolves through CoreDNS without the temporary rule.
+- Argo CD's repository server can access GitHub over HTTPS.
 
-The ConfigMap was applied using:
+The historical recovery manifest remains at:
+kubernetes/recovery/coredns-github-temporary.yaml
 
-    kubectl --context devops-mgmt apply -f kubernetes/recovery/coredns-github-temporary.yaml
+Do not automatically reapply it. The WSL DNS address may change.
+The K3s-managed main CoreDNS ConfigMap must not be manually edited.
 
-This workaround restores GitHub DNS resolution without modifying
-the K3s-managed main CoreDNS ConfigMap.
-
-The WSL resolver address may change after a restart.
-
-Rollback only after verifying an alternative working DNS path.
-First inspect the live coredns-custom ConfigMap and ensure it
-contains no unrelated customizations. If this workaround is its
-only configuration, it may be deleted using:
-
-    kubectl --context devops-mgmt -n kube-system delete configmap coredns-custom
-
-Also remove the temporary manifest in a subsequent Git change
-when the workaround is retired.
-
-Do not remove the workaround while the default upstream DNS
-path remains broken.
+The backup ISP issue is not confirmed resolved because that provider
+is no longer active.
 
 ## 8. Create an Encrypted Recovery Checkpoint
 
@@ -254,15 +278,28 @@ and all captured platform components are not one atomic snapshot.
 
 ## 9. Recovery Acceptance Criteria
 
-Before declaring the lab recovered:
+After startup, verify:
 
-- Three original Docker volume identities verified.
-- Three Kubernetes APIs and nodes Ready.
-- DEV, UAT, and PROD namespaces present.
-- Argo CD server and controllers Ready.
-- All three Argo CD Applications Synced and Healthy.
-- All three Argo CD cluster connections Successful.
-- Encrypted backup verified and copied to a second location.
+- All three original Docker volume identities match the baseline.
+- All Kubernetes APIs respond and nodes report Ready.
+- External EKS-token authentication works in all three clusters.
+- DEV, UAT, and PROD namespaces remain present.
+- Argo CD components are Ready.
+- All three Argo CD Applications are Synced and Healthy.
+- All three Argo CD cluster connections report Successful.
+- GitHub DNS and repository access work.
+- No unexpected infrastructure recreation has occurred.
 
-The full WSL shutdown/resume acceptance test remains a separate
-milestone. Do not perform it until a verified checkpoint exists.
+The first controlled WSL shutdown/resume test preserved every
+recorded Docker volume and Kubernetes resource identity.
+
+External authentication initially required manual webhook repair.
+
+A final fully automated shutdown/resume acceptance test remains
+pending. It must succeed using lab-up.sh without manual edits,
+container recreation, or a newly created pre-shutdown backup.
+
+The known Floci CREATING warnings may remain.
+
+Encrypted backups must be maintained for disaster recovery,
+but full backup restoration has not yet been rehearsed.

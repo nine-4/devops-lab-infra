@@ -369,6 +369,18 @@ silently accept newly initialized Kubernetes state.
 The baseline is not a backup. Preserve it separately from WSL,
 alongside the encrypted recovery records.
 
+The safe startup script also validates the three K3s authentication
+webhook endpoints using scripts/verify-eks-webhooks.sh.
+
+The required endpoint is:
+http://floci:4566/_floci/eks/token-webhook
+
+Unexpected configurations stop startup instead of triggering
+automatic changes or container recreation.
+
+Normal WSL shutdowns do not require an immediate pre-shutdown backup.
+Periodic encrypted backups remain necessary for disaster recovery.
+
 ### Exit Codes
 
 | Code | Result | Meaning |
@@ -385,43 +397,63 @@ The script does not create, restart, repair, or delete infrastructure.
 
 ### Current Recovery State
 
-Following the October 2026 Floci recovery incident:
+The original October 2026 incident replaced the management and PROD
+Kubernetes datastores. Argo CD and the PROD namespace were subsequently
+restored. The nonprod datastore retained its existing resources.
 
-- The management and production k3s datastores were replaced.
-- The non-production datastore retained its existing DEV and UAT namespaces.
-- All three Kubernetes APIs recovered and their nodes became Ready.
-- The management cluster requires Argo CD bootstrapping.
-- The production cluster requires restoration of the PROD namespace.
+A controlled WSL shutdown/resume test preserved all three Docker
+volume identities and all ten recorded Kubernetes resource UIDs.
 
-These are recovery tasks, not normal startup operations.
+The test exposed stale EKS authentication webhook IP addresses.
+Docker reassigned Floci from 172.18.0.2 to 172.18.0.5, while
+all three K3s API servers still referenced the old address.
+
+The webhook endpoints were corrected to use the Docker hostname
+floci. Controlled restarts of the existing K3s containers restored
+external EKS-token authentication in all three clusters.
+
+The startup script now validates the stable hostname configuration.
+Its running-environment idempotency test passed.
+
+A final fully automated WSL shutdown/resume test remains pending.
 
 ### Initial Backup
 
-An initial recovery checkpoint contains Kubernetes SQLite snapshots,
-K3s server configuration and tokens, Floci metadata, and Terraform state.
+Encrypted GPG AES-256 recovery checkpoints were created before and
+after the manual restoration. The restored-state checkpoint includes
+consistent Kubernetes SQLite backups, K3s configuration, Floci
+metadata, and Terraform state.
 
-The checkpoint was encrypted with GPG AES-256 and copied outside WSL
-to the Windows filesystem. The two encrypted copies were verified
-against matching SHA-256 checksums.
+Encrypted copies were retained in WSL and on the Windows filesystem,
+with matching checksums verified.
 
-Backups must remain outside public Git repositories.
+A new backup is not required immediately before every WSL shutdown.
+Maintain periodic backups and create checkpoints before risky changes.
 
-The initial backup has not yet passed a full restoration test.
-Both copies currently reside on the same physical workstation.
+Full backup restoration has not yet been rehearsed. Both backup
+locations remain on the same physical workstation.
+
+Never commit encrypted or unencrypted backup archives, Terraform state,
+K3s credentials, or recovery secrets to public Git repositories.
 
 ### Known Limitations
 
-Volume baseline checks now detect changes to Docker volume creation
-timestamps, but cannot detect in-place datastore corruption or prove
-that Kubernetes contents remain unchanged.
+Volume identity checks detect missing or replaced volumes but do not
+detect in-place datastore corruption.
 
-The safe startup script has passed its already-running environment
-test. Full WSL shutdown/resume and disaster-recovery restoration
-tests remain pending.
+The corrected webhook configuration resides in existing K3s container
+filesystems. Docker stop/start preserves it; container recreation
+does not. The startup script refuses unexpected recreation.
 
-Normal startup and disaster recovery must remain separate workflows.
-A degraded Floci status must never automatically trigger container
-recreation, volume deletion, or Terraform destruction.
+All Kubernetes APIs and external EKS authentication work, although
+Floci continues reporting the clusters as CREATING.
+
+Manual shutdown/resume recovery passed. The final fully automated
+cold-start acceptance test is still pending.
+
+The temporary GitHub DNS workaround was removed after the main ISP
+was restored. Normal DNS resolution and GitHub HTTPS access now work.
+The backup ISP's DNS compatibility has not been retested.
 
 ## Terraform Workflow
 
