@@ -415,7 +415,13 @@ external EKS-token authentication in all three clusters.
 The startup script now validates the stable hostname configuration.
 Its running-environment idempotency test passed.
 
-A final fully automated WSL shutdown/resume test remains pending.
+The final automated WSL shutdown/resume test passed. The recovery
+script restarted the six existing containers without manual repair.
+All three Kubernetes APIs and nodes became Ready. Subsequent checks
+confirmed that all three volume identities and all ten tracked
+Kubernetes resource UIDs remained unchanged. Argo CD reported
+three Successful cluster connections and three Synced/Healthy
+Applications.
 
 ### Initial Backup
 
@@ -448,8 +454,10 @@ does not. The startup script refuses unexpected recreation.
 All Kubernetes APIs and external EKS authentication work, although
 Floci continues reporting the clusters as CREATING.
 
-Manual shutdown/resume recovery passed. The final fully automated
-cold-start acceptance test is still pending.
+Both manual and automated WSL shutdown/resume recovery tests passed.
+The automated test required no new pre-shutdown backup, manual
+webhook repair, or container recreation. Full encrypted backup
+restoration remains untested.
 
 The temporary GitHub DNS workaround was removed after the main ISP
 was restored. Normal DNS resolution and GitHub HTTPS access now work.

@@ -295,9 +295,18 @@ recorded Docker volume and Kubernetes resource identity.
 
 External authentication initially required manual webhook repair.
 
-A final fully automated shutdown/resume acceptance test remains
-pending. It must succeed using lab-up.sh without manual edits,
-container recreation, or a newly created pre-shutdown backup.
+The final automated WSL cold-start acceptance test passed.
+After reopening WSL, ./scripts/lab-up.sh started the six
+existing containers and recovered all three Kubernetes APIs
+with working EKS authentication. No manual webhook repair,
+container recreation, or new pre-shutdown backup was needed.
+
+All three original Docker volume identities and all ten
+tracked Kubernetes resource UIDs matched the original baseline.
+All seven Argo CD pods were Ready, all three registered cluster
+connections reported Successful, and all three Applications
+reported Synced and Healthy. GitHub repository connectivity
+from the Argo CD repo-server was also verified.
 
 The known Floci CREATING warnings may remain.
 
