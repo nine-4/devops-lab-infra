@@ -104,6 +104,13 @@ grep -Fxq \
 
 ok "Floci persistence settings verified"
 
+# Verify authentication endpoints before starting Kubernetes.
+# Do not automatically modify unexpected webhook configurations.
+info "Verifying EKS authentication webhook endpoints"
+
+"$SCRIPT_DIR/verify-eks-webhooks.sh" \
+  || stop "EKS webhook verification failed; manual recovery required"
+
 # Start the existing k3s containers before Floci attempts adoption.
 for cluster in "${CLUSTERS[@]}"; do
   start_existing "floci-eks-$cluster"
@@ -142,7 +149,7 @@ info "Waiting for Kubernetes API readiness"
 
 ready=false
 
-for attempt in {1..20}; do
+for attempt in {1..40}; do
   all_ready=true
 
   for cluster in "${CLUSTERS[@]}"; do
