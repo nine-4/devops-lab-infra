@@ -223,14 +223,14 @@ already synchronized.
 
 ## 7. DNS Recovery and Retired GitHub Workaround
 
-The backup ISP previously caused external DNS failures in CoreDNS.
-K3s fell back to Google DNS resolvers that were unreachable.
+External DNS resolution previously failed when K3s selected
+upstream DNS resolvers that were unreachable from CoreDNS.
 
 A temporary coredns-custom ConfigMap forwarded GitHub DNS queries
 to the WSL DNS resolver at 10.255.255.254.
 
-After IT restored the main ISP, normal CoreDNS forwarding and direct
-Google DNS queries succeeded.
+Subsequent tests confirmed normal CoreDNS forwarding and direct
+DNS queries to Google's public DNS servers.
 
 The temporary ConfigMap was removed on October 12, 2026.
 
@@ -246,8 +246,8 @@ kubernetes/recovery/coredns-github-temporary.yaml
 Do not automatically reapply it. The WSL DNS address may change.
 The K3s-managed main CoreDNS ConfigMap must not be manually edited.
 
-The backup ISP issue is not confirmed resolved because that provider
-is no longer active.
+The original failure conditions have not been reproduced, so
+compatibility under different network conditions remains unverified.
 
 ## 8. Create an Encrypted Recovery Checkpoint
 

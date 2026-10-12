@@ -459,9 +459,9 @@ The automated test required no new pre-shutdown backup, manual
 webhook repair, or container recreation. Full encrypted backup
 restoration remains untested.
 
-The temporary GitHub DNS workaround was removed after the main ISP
-was restored. Normal DNS resolution and GitHub HTTPS access now work.
-The backup ISP's DNS compatibility has not been retested.
+The temporary GitHub DNS workaround was removed after normal
+CoreDNS resolution and GitHub HTTPS connectivity were verified.
+The earlier upstream DNS failure has not been reproduced.
 
 ## Terraform Workflow
 
